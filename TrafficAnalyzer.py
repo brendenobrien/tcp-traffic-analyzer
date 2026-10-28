@@ -2,6 +2,90 @@ import struct, sys
 
 import packet_struct
 
+class Connection:
+
+    def __init__(self, key):
+        self.key = key
+        self.packets = []
+
+        self.syn_count = 0
+        self.fin_count = 0
+        self.rst_count = 0
+        self.state = "S0F0"
+        self.is_complete = False
+        self.start_time = 0.0
+        self.end_time = 0.0
+        self.duration = 0.0
+
+
+    def add_packet(self, packet):
+        self.packets.append(packet)
+
+    def analyze_state(self):
+        for packet in self.packets:
+            flags = packet.TCP_header.flags
+            if flags.get("SYN") == 1:
+                self.syn_count += 1
+                if self.syn_count == 1:
+                    self.start_time = packet.timestamp
+            if flags.get("FIN") == 1:
+                self.fin_count += 1
+                self.end_time = packet.timestamp
+            if flags.get("RST") == 1:
+                self.rst_count += 1
+        self.state = f"S{self.syn_count}F{self.fin_count}"
+
+        if self.syn_count >= 1 and self.fin_count >= 1:
+            self.is_complete = True
+            self.duration = round(self.end_time - self.start_time, 6)
+    def calculate_metric(self):
+        if not self.is_complete:
+            return
+
+        client_ip = self.packets[0].IP_header.src_ip
+
+        self.src_to_dst_packets = 0
+        self.dst_to_src_packets = 0
+        self.src_to_dst_bytes = 0
+        self.dst_to_src_bytes = 0
+        self.window_sizes = []
+        self.rtts = []
+
+        pending_acks = {}
+
+        for p in self.packets:
+            ip_total_len = p.IP_header.total_len
+            ip_header_len = p.IP_header.header_len
+            tcp_header_len = p.TCP_header.data_offset
+
+            payload_size = ip_total_len - ip_header_len - tcp_header_len
+
+            if p.IP_header.src_ip == client_ip:
+                self.src_to_dst_packets += 1
+                self.src_to_dst_bytes += payload_size
+            else:
+                self.dst_to_src_packets += 1
+                self.dst_to_src_bytes += payload_size
+
+            self.window_sizes.append(p.TCP_header.window_size)
+            seq_num = p.TCP_header.seq_num
+            ack_num = p.TCP_hedaer.ack_num
+            flags = p.TCP_header.flags
+
+            if flags.get("ACK") == 1 and ack_num in pending_acks:
+                rtt = p.timestamp - pending_acks[ack_num]
+                self.rtts.append(round(rtt, 6))
+                del pending_acks[ack_num]
+
+            if payload_size > 0:
+                expected_ack = seq_num + payload_size
+                if expected_ack not in pending_acks:
+                    pending_acks[expected_ack] = p.timestamp
+
+            elif flags.get("SYN") == 1 or flags.get("FIN") == 1:
+                expected_ack = seq_num + 1
+                if expected_ack not in pending_acks:
+                    pending_acks[expected_ack] = p.timestamp
 # Extract Endian Format
 def parse_global_header(filename):
     try:
@@ -30,7 +114,7 @@ def parse_global_header(filename):
         sys.exit(1)
     return endian, f
 
-def parse_packets(f, endian):
+def parse_packets(endian, f):
     packet_count = 0
     orig_time = None
     parsed_tcp_packets = []
@@ -115,12 +199,35 @@ def check_tcp_and_process(data, count, ts_sec, ts_usec, orig_time):
     windowb1 = data[tcp_header_start + 14: tcp_header_start + 15]
     windowb2 = data[tcp_header_start + 15: tcp_header_start + 16]
     current_packet.TCP_header.get_window_size(windowb1, windowb2)
+    print(current_packet.TCP_header.flags)
 
     return current_packet
+def group_into_connections(packet_list) -> dict:
+    connection_dict = {}
+    for packet in packet_list:
+        src_ip = packet.IP_Header.src_ip
+        dst_ip = packet.IP_Header.dst_ip
+        src_port = packet.IP_Header.src_port
+        dst_port = packet.IP_Header.dst_port
+
+        if src_ip < dst_ip:
+            key = (src_ip, src_port, dst_ip, dst_port)
+        else:
+            key = (dst_ip, dst_port, src_ip, src_port)
+
+        if key not in connection_dict:
+            connection_dict[key] = Connection(key)
+
+        connection_dict[key].add_packet(packet)
+    return connection_dict
 if __name__ == "__main__":
     filename = "sample-capture-file.cap"
 
     endian, f = parse_global_header(filename)
-    print(parse_packets(f, endian))
+    packets = parse_packets(endian, f)
+
+    connections = group_into_connections(packets)
+    #packets = parse_packets()
+
     
 
