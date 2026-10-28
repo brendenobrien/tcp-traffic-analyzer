@@ -1,4 +1,4 @@
-import struct, sys
+import struct, sys, io
 
 import packet_struct
 
@@ -87,24 +87,25 @@ class Connection:
                 if expected_ack not in pending_acks:
                     pending_acks[expected_ack] = p.timestamp
 # Extract Endian Format
-def parse_global_header(filename):
+def parse_global_header(filename: str):
     try:
+        # Open cap file
         f = open(filename, "rb")
-
+    # End program if file does not exist
     except FileNotFoundError:
         print(f"File with name {filename} could not be found.")
         sys.exit(1)
-
+    # Read global header
     global_header = f.read(24)
-
+    # Header too small to be a global header, something is wrong, exit.
     if len(global_header) < 24:
         print("File too small to contain global header")
         sys.exit(1)
 
-    magic, version_major, version_minor, thiszone, sigfigs, snaplen, network = struct.unpack("<IHHIIII", global_header)
+    # Grab magic number
+    magic = struct.unpack("<I", global_header[:4])[0]
     if magic == 0xd4c3b2a1:
         print("Swapped endian formatting")
-        magic, version_major, version_minor, thiszone, sigfigs, snaplen, network = struct.unpack(">IHHIIII", global_header)
         endian = ">"
     elif magic == 0xa1b2c3d4:
         print("Native endian formatting")
@@ -114,120 +115,120 @@ def parse_global_header(filename):
         sys.exit(1)
     return endian, f
 
-def parse_packets(endian, f):
+def parse_packets(endian: str, f: io.BufferedReader) -> list:
     packet_count = 0
     orig_time = None
-    parsed_tcp_packets = []
+    packets = []
     head_format = endian + "IIII"
 
     while(True):
+        # Read packet header
         packet_header = f.read(16)
         packet_count += 1
+
+        # Exit if data read is less than header size, i.e., end of file has been reached
         if len(packet_header) < 16:
             break
-        
+
+        # Extract header data
         ts_sec, ts_usec, incl_len, orig_len = struct.unpack(head_format, packet_header)
         time_absolute = ts_sec + (ts_usec * 0.000001)
 
         if orig_time == None:
             orig_time = time_absolute
-
-        ts_sec_bytes = packet_header[0:4]
-        ts_usec_bytes = packet_header[4:8]
-
+        # Read packet data
         packet_data = f.read(incl_len)
 
+        # Process packet data
         tcp_packet = check_tcp_and_process(
             packet_data,
             packet_count,
-            ts_sec_bytes,
-            ts_usec_bytes,
+            packet_header[0:4],
+            packet_header[4:8],
             orig_time
         )
 
         if tcp_packet is not None:
-            parsed_tcp_packets.append(tcp_packet)
-    return parsed_tcp_packets
+            packets.append(tcp_packet)
+    f.close()
+    return packets
 
 def check_tcp_and_process(data, count, ts_sec, ts_usec, orig_time):
     if len(data) < 34:
         return None
-
-    protocol_offset = 14+9
-
-    protocol_val = struct.unpack('B', data[protocol_offset: protocol_offset + 1])[0]
+    
+    protocol_val = struct.unpack('B', data[23:24])[0]
 
     if protocol_val != 6:
         return None
+    
+    # Create packet object
+    packet = packet_struct.packet()
+    packet.packet_No_set(count)
+    packet.timestamp_set(ts_sec, ts_usec, orig_time)
 
-    current_packet = packet_struct.packet()
-    current_packet.packet_No_set(count)
-    current_packet.timestamp_set(ts_sec, ts_usec, orig_time)
+    ip = 14
 
-    ip_header_start = 14
+    packet.IP_header.get_header_len(data[ip: ip + 1]) 
+    packet.IP_header.get_total_len(data[ip + 2:ip + 4])
 
-    current_packet.IP_header.get_header_len(data[ip_header_start: ip_header_start + 1])
+    # Extract IP addresses for destination and source
+    packet.IP_header.get_IP(data[26:30], data[30:34])
 
-    ip_header_len = current_packet.IP_header.ip_header_len
-
-    current_packet.IP_header.get_total_len(data[ip_header_start + 2: ip_header_start + 4])
-
-    src_ip_offset = ip_header_start + 12
-    buffer1 = data[src_ip_offset: src_ip_offset + 4]
-
-    dest_ip_offset = ip_header_start + 16
-    buffer2 = data[dest_ip_offset: dest_ip_offset + 4]
-
-    current_packet.IP_header.get_IP(buffer1, buffer2)
-
-    tcp_header_start = ip_header_start + ip_header_len
-    if len(data) < tcp_header_start + 20:
+    tcp = ip + packet.IP_header.ip_header_len
+    if len(data) < tcp + 20:
         return None
     # Extract TCP Source Port
-    current_packet.TCP_header.get_src_port(data[tcp_header_start: tcp_header_start + 2])
-    # Extract Destination Port
-    current_packet.TCP_header.get_dst_port(data[tcp_header_start + 2: tcp_header_start + 4])
-    # Extract SEQ Num
-    current_packet.TCP_header.get_seq_num(data[tcp_header_start + 4: tcp_header_start + 8])
-    # Extract ACK Num
-    current_packet.TCP_header.get_ack_num(data[tcp_header_start + 8: tcp_header_start + 12])
-    # Extract Data Offset
-    current_packet.TCP_header.get_data_offset(data[tcp_header_start + 12: tcp_header_start + 13])
-    # Extract Flags
-    current_packet.TCP_header.get_flags(data[tcp_header_start + 13: tcp_header_start + 14])
-    # Extract Window Size
-    windowb1 = data[tcp_header_start + 14: tcp_header_start + 15]
-    windowb2 = data[tcp_header_start + 15: tcp_header_start + 16]
-    current_packet.TCP_header.get_window_size(windowb1, windowb2)
-    print(current_packet.TCP_header.flags)
+    packet.TCP_header.get_src_port(data[tcp: tcp + 2])
 
-    return current_packet
-def group_into_connections(packet_list) -> dict:
+    # Extract Destination Port
+    packet.TCP_header.get_dst_port(data[tcp + 2: tcp + 4])
+
+    # Extract SEQ Num
+    packet.TCP_header.get_seq_num(data[tcp + 4: tcp + 8])
+
+    # Extract ACK Num
+    packet.TCP_header.get_ack_num(data[tcp + 8: tcp + 12])
+
+    # Extract Data Offset
+    packet.TCP_header.get_data_offset(data[tcp + 12: tcp + 13])
+
+    # Extract Flags
+    packet.TCP_header.get_flags(data[tcp + 13: tcp + 14])
+
+    # Extract Window Size
+    packet.TCP_header.get_window_size(data[tcp + 14: tcp + 15], data[tcp + 15: tcp + 16])
+    return packet
+
+def group_into_connections(packet_list: list) -> dict:
     connection_dict = {}
     for packet in packet_list:
-        src_ip = packet.IP_Header.src_ip
-        dst_ip = packet.IP_Header.dst_ip
-        src_port = packet.IP_Header.src_port
-        dst_port = packet.IP_Header.dst_port
-
-        if src_ip < dst_ip:
-            key = (src_ip, src_port, dst_ip, dst_port)
+        if packet.IP_header.src_ip < packet.IP_header.dst_ip:
+            key = (
+                packet.IP_header.src_ip,
+                packet.TCP_header.src_port,
+                packet.IP_header.dst_ip,
+                packet.TCP_header.dst_port
+                )
         else:
-            key = (dst_ip, dst_port, src_ip, src_port)
+            key = (
+                packet.IP_header.dst_ip,
+                packet.TCP_header.dst_port, 
+                packet.IP_header.src_ip, 
+                packet.TCP_header.src_port
+                )
 
         if key not in connection_dict:
             connection_dict[key] = Connection(key)
 
         connection_dict[key].add_packet(packet)
     return connection_dict
+
 if __name__ == "__main__":
     filename = "sample-capture-file.cap"
-
     endian, f = parse_global_header(filename)
     packets = parse_packets(endian, f)
-
     connections = group_into_connections(packets)
-    #packets = parse_packets()
 
     
 
