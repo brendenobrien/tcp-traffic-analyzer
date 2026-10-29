@@ -39,6 +39,7 @@ class Connection:
         if self.syn_count >= 1 and self.fin_count >= 1:
             self.is_complete = True
             self.duration = round(self.end_time - self.start_time, 6)
+
     def calculate_metric(self):
         if not self.is_complete:
             return
@@ -87,6 +88,19 @@ class Connection:
                 expected_ack = seq_num + 1
                 if expected_ack not in pending_acks:
                     pending_acks[expected_ack] = p.timestamp
+    def is_open(self):
+        last_fin = None
+        for i, packet in enumerate(self.packets):
+            if packet.TCP_header.flags.get("FIN") == 1:
+                last_fin = i
+        if last_fin is None:
+            return True
+        for packet in self.packets[last_fin + 1:]:
+            payload_size = packet.IP_header.total_len - packet.IP_header.ip_header_len - packet.TCP_header.data_offset
+            if payload_size > 0:
+                return True
+        return False
+
 # Extract Endian Format
 def parse_global_header(filename: str):
     try:
@@ -144,8 +158,7 @@ def parse_packets(endian: str, f: io.BufferedReader) -> list:
         tcp_packet = check_tcp_and_process(
             packet_data,
             packet_count,
-            packet_header[0:4],
-            packet_header[4:8],
+            time_absolute,
             orig_time
         )
 
@@ -154,7 +167,7 @@ def parse_packets(endian: str, f: io.BufferedReader) -> list:
     f.close()
     return packets
 
-def check_tcp_and_process(data, count, ts_sec, ts_usec, orig_time):
+def check_tcp_and_process(data, count, time_absolute, orig_time):
     if len(data) < 34:
         return None
     
@@ -166,7 +179,7 @@ def check_tcp_and_process(data, count, ts_sec, ts_usec, orig_time):
     # Create packet object
     packet = packet_struct.packet()
     packet.packet_No_set(count)
-    packet.timestamp_set(ts_sec, ts_usec, orig_time)
+    packet.timestamp = round(time_absolute - orig_time, 6)
 
     ip = 14
 
@@ -221,14 +234,15 @@ def group_into_connections(packet_list: list) -> dict:
 
         if key not in connection_dict:
             connection_dict[key] = Connection(key)
-         #   print(key)
         connection_dict[key].add_packet(packet)
     return connection_dict
 
 def analyze_connections(connections: dict):
+
     complete_connections = []
 
-    for key, conn in connections.items():
+    # Analyze state of every connection and create list of completed ones.
+    for conn in connections.values():
         conn.analyze_state()
 
         if conn.is_complete:
@@ -237,20 +251,25 @@ def analyze_connections(connections: dict):
     return complete_connections
 
 def print_report(connections: dict, complete_connections: list):
-    print(f"A) Total Number of Connections: {len(connections)}")
+    print(f"A) Total number of connections: {len(connections)}")
+    print()
     print("-" * 40)
+    print()
     print("B) Connections' Details")
+    print()
     reset_connections = 0
     before_capture = 0
-    #print(connections)
+    open_connections = 0
     count = 0
     for conn in connections.values():
         if count != 0:
             print("+" * 40)
         conn: Connection
+        if conn.is_open():
+            open_connections += 1
         if conn.rst_count >= 1:
             reset_connections += 1
-        if conn.syn_count == 0:
+        if conn.packets[0].TCP_header.flags.get("SYN") != 1:
             before_capture += 1
         count += 1
         
@@ -260,7 +279,7 @@ def print_report(connections: dict, complete_connections: list):
         print(f"Source Port: {conn.packets[0].TCP_header.src_port}")
         print(f"Destination Port: {conn.packets[0].TCP_header.dst_port}")
         print(f"Status: {conn.state}")
-        if conn in complete_connections:
+        if conn.is_complete:
             print(f"Start Time: {conn.start_time:.6f}s")
             print(f"End Time: {conn.end_time:.6f}s")
             print(f"Duration: {(conn.end_time - conn.start_time):.6f}s")
@@ -271,11 +290,14 @@ def print_report(connections: dict, complete_connections: list):
             print(f"Number of data bytes sent from Destination to Source: {conn.dst_to_src_bytes}B")
             print(f"Total Number of Data Bytes: {conn.dst_to_src_bytes + conn.src_to_dst_bytes}B")
         print("END")
+    print()
     print("-" * 40)
+    print()
     print("C) General")
+    print()
     print(f"Total Number of Complete TCP Connections: {len(complete_connections)}")
     print(f"Total Number of Reset TCP Connections: {reset_connections}")
-    print(f"Number of TCP Connections still open when the trace capture ended: {len(connections) - len(complete_connections)}")
+    print(f"Number of TCP Connections still open when the trace capture ended: {open_connections}")
     print(f"Number of TCP Connections established before the capture started: {before_capture}")
     print("-" * 40)
     complete_connection_statistics(complete_connections)
@@ -285,16 +307,24 @@ def complete_connection_statistics(complete_connections: list):
     rtts = [r for c in complete_connections for r in c.rtts]
     packets = [len(c.packets) for c in complete_connections]
     windows = [w for c in complete_connections for w in c.window_sizes]
-
+    if not complete_connections:
+        print("There were no complete TCP connections...")
+        return
+    print()
     print("D) Complete TCP Connections:")
     print()
     print(f"Minimum Time Duration: {min(durations):.6f}s")
     print(f"Mean Time Duration: {sum(durations) / len(durations):.6f}s")
-    print(f"Maximum Time Duration: {max(durations):6f}s")
+    print(f"Maximum Time Duration: {max(durations):.6f}s")
     print()
-    print(f"Minimum RTT Value: {min(rtts):.6f}s")
-    print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}s")
-    print(f"Maximum RTT Value: {max(rtts):.6f}s")
+    if rtts:
+        print(f"Minimum RTT Value: {min(rtts):.6f}s")
+        print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}s")
+        print(f"Maximum RTT Value: {max(rtts):.6f}s")
+    else:
+        print("Minimum RTT Value: N/A")
+        print("Mean RTT Value: N/A")
+        print("Maximum RTT Value: N/A")
     print()
     print(f"Minimum Number of Packets including both send/received: {min(packets)}")
     print(f"Mean Number of Packets including both send/received: {sum(packets) / len(packets):.6f}")
