@@ -34,7 +34,7 @@ class Connection:
                 self.end_time = packet.timestamp
             if flags.get("RST") == 1:
                 self.rst_count += 1
-        self.state = f"S{self.syn_count}F{self.fin_count}"
+        self.state = f"S{self.syn_count}F{self.fin_count}" if self.rst_count == 0 else f"S{self.syn_count}F{self.fin_count}/R"
 
         if self.syn_count >= 1 and self.fin_count >= 1:
             self.is_complete = True
@@ -237,19 +237,23 @@ def analyze_connections(connections: dict):
     return complete_connections
 
 def print_report(connections: dict, complete_connections: list):
-    print(f"Total Number of Connections: {len(connections)}")
+    print(f"A) Total Number of Connections: {len(connections)}")
     print("-" * 40)
+    print("B) Connections' Details")
     reset_connections = 0
     before_capture = 0
     #print(connections)
     count = 0
     for conn in connections.values():
+        if count != 0:
+            print("+" * 40)
         conn: Connection
         if conn.rst_count >= 1:
             reset_connections += 1
         if conn.syn_count == 0:
             before_capture += 1
         count += 1
+        
         print(f"Connection {count}:")
         print(f"Source Address: {conn.packets[0].IP_header.src_ip}")
         print(f"Destination Address: {conn.packets[0].IP_header.dst_ip}")
@@ -257,9 +261,9 @@ def print_report(connections: dict, complete_connections: list):
         print(f"Destination Port: {conn.packets[0].TCP_header.dst_port}")
         print(f"Status: {conn.state}")
         if conn in complete_connections:
-            print(f"Start Time: {conn.start_time:.6f}")
-            print(f"End Time: {conn.end_time:.6f}")
-            print(f"Duration: {round(conn.end_time - conn.start_time, 6)}")
+            print(f"Start Time: {conn.start_time:.6f}s")
+            print(f"End Time: {conn.end_time:.6f}s")
+            print(f"Duration: {(conn.end_time - conn.start_time):.6f}s")
             print(f"Number of packets sent from Source to Destination: {conn.src_to_dst_packets}")
             print(f"Number of packets sent from Destination to Source: {conn.dst_to_src_packets}")
             print(f"Total Number of packets: {conn.src_to_dst_packets + conn.dst_to_src_packets}")
@@ -267,9 +271,8 @@ def print_report(connections: dict, complete_connections: list):
             print(f"Number of data bytes sent from Destination to Source: {conn.dst_to_src_bytes}B")
             print(f"Total Number of Data Bytes: {conn.dst_to_src_bytes + conn.src_to_dst_bytes}B")
         print("END")
-        print("+" * 40)
     print("-" * 40)
-    print("General")
+    print("C) General")
     print(f"Total Number of Complete TCP Connections: {len(complete_connections)}")
     print(f"Total Number of Reset TCP Connections: {reset_connections}")
     print(f"Number of TCP Connections still open when the trace capture ended: {len(connections) - len(complete_connections)}")
@@ -283,23 +286,23 @@ def complete_connection_statistics(complete_connections: list):
     packets = [len(c.packets) for c in complete_connections]
     windows = [w for c in complete_connections for w in c.window_sizes]
 
-    print("Complete TCP Connections:")
+    print("D) Complete TCP Connections:")
     print()
-    print(f"Minimum Time Duration: {min(durations):.6f}")
-    print(f"Mean Time Duration: {sum(durations) / len(durations):.6f}")
-    print(f"Maximum Time Duration: {max(durations):6f}")
+    print(f"Minimum Time Duration: {min(durations):.6f}s")
+    print(f"Mean Time Duration: {sum(durations) / len(durations):.6f}s")
+    print(f"Maximum Time Duration: {max(durations):6f}s")
     print()
-    print(f"Minimum RTT Value: {min(rtts):.6f}")
-    print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}")
-    print(f"Maximum RTT Value: {max(rtts):.6f}")
+    print(f"Minimum RTT Value: {min(rtts):.6f}s")
+    print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}s")
+    print(f"Maximum RTT Value: {max(rtts):.6f}s")
     print()
     print(f"Minimum Number of Packets including both send/received: {min(packets)}")
     print(f"Mean Number of Packets including both send/received: {sum(packets) / len(packets):.6f}")
     print(f"Maximum Number of Packets including both send/received: {max(packets)}")
     print()
-    print(f"Minimum Receive Window Size including both send/received: {min(windows)}")
-    print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}")
-    print(f"Maximum Receive Window Size including both send/received: {max(windows)}")
+    print(f"Minimum Receive Window Size including both send/received: {min(windows)}B")
+    print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}B")
+    print(f"Maximum Receive Window Size including both send/received: {max(windows)}B")
 
 if __name__ == "__main__":
 
