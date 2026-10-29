@@ -44,7 +44,8 @@ class Connection:
         if not self.is_complete:
             return
 
-        client_ip = self.packets[0].IP_header.src_ip
+        client = (self.packets[0].IP_header.src_ip, self.packets[0].TCP_header.src_port)
+    
 
         self.src_to_dst_packets = 0
         self.dst_to_src_packets = 0
@@ -62,32 +63,28 @@ class Connection:
 
             payload_size = ip_total_len - ip_header_len - tcp_header_len
 
-            if p.IP_header.src_ip == client_ip:
+            if p.IP_header.src_ip == client[0]:
                 self.src_to_dst_packets += 1
                 self.src_to_dst_bytes += payload_size
             else:
                 self.dst_to_src_packets += 1
                 self.dst_to_src_bytes += payload_size
 
+            from_client = (p.IP_header.src_ip, p.TCP_header.src_port) == client
             self.window_sizes.append(p.TCP_header.window_size)
-            seq_num = p.TCP_header.seq_num
-            ack_num = p.TCP_header.ack_num
             flags = p.TCP_header.flags
-
-            if flags.get("ACK") == 1 and ack_num in pending_acks:
-                rtt = p.timestamp - pending_acks[ack_num]
-                self.rtts.append(round(rtt, 6))
-                del pending_acks[ack_num]
-
-            if payload_size > 0:
-                expected_ack = seq_num + payload_size
-                if expected_ack not in pending_acks:
+            if from_client:
+                if payload_size > 0:
+                    expected_ack = p.TCP_header.seq_num + payload_size
+                elif flags.get("SYN") == 1 or flags.get("FIN") == 1:
+                    expected_ack = p.TCP_header.seq_num + 1
+                else:
+                    expected_ack = None
+                if expected_ack is not None and expected_ack not in pending_acks:
                     pending_acks[expected_ack] = p.timestamp
-
-            elif flags.get("SYN") == 1 or flags.get("FIN") == 1:
-                expected_ack = seq_num + 1
-                if expected_ack not in pending_acks:
-                    pending_acks[expected_ack] = p.timestamp
+            elif flags.get("ACK") == 1 and p.TCP_header.ack_num in pending_acks:
+                self.rtts.append(p.timestamp - pending_acks.pop(p.TCP_header.ack_num))
+                
     def is_open(self):
         last_fin = None
         for i, packet in enumerate(self.packets):
