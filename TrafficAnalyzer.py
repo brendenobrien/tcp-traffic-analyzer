@@ -293,15 +293,15 @@ def complete_connection_statistics(complete_connections: list):
     print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}")
     print(f"Maximum RTT Value: {max(rtts):.6f}")
     print()
-    print(f"Minimum Number of Packets including both send/received: {min(packets):.6f}")
+    print(f"Minimum Number of Packets including both send/received: {min(packets)}")
     print(f"Mean Number of Packets including both send/received: {sum(packets) / len(packets):.6f}")
-    print(f"Maximum Number of Packets including both send/received: {max(packets):.6f}")
+    print(f"Maximum Number of Packets including both send/received: {max(packets)}")
     print()
     print(f"Minimum Receive Window Size including both send/received: {min(windows):.6f}")
     print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}")
     print(f"Maximum Receive Window Size including both send/received: {max(windows):.6f}")
 if __name__ == "__main__":
-    filename = "/home/brenden/coding/CSC361/A2/sample-capture-file.cap"
+    filename = "sample-capture-file.cap"
     endian, f = parse_global_header(filename)
     packets = parse_packets(endian, f)
     connections = group_into_connections(packets)
