@@ -1,3 +1,4 @@
+import os
 import struct, sys, io
 
 import packet_struct
@@ -300,8 +301,15 @@ def complete_connection_statistics(complete_connections: list):
     print(f"Minimum Receive Window Size including both send/received: {min(windows):.6f}")
     print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}")
     print(f"Maximum Receive Window Size including both send/received: {max(windows):.6f}")
+
 if __name__ == "__main__":
-    filename = "sample-capture-file.cap"
+    
+    if len(sys.argv) > 1:
+        filename = sys.argv[1] # If file provided in command line, use this one
+    else:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        filename = os.path.join(script_dir, "sample-capture-file.cap") # default file
+ 
     endian, f = parse_global_header(filename)
     packets = parse_packets(endian, f)
     connections = group_into_connections(packets)
