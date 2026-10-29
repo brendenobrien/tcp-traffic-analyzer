@@ -238,7 +238,7 @@ def analyze_connections(connections: dict):
 
 def print_report(connections: dict, complete_connections: list):
     print(f"Total Number of Connections: {len(connections)}")
-    print()
+    print("-" * 40)
     reset_connections = 0
     before_capture = 0
     #print(connections)
@@ -257,9 +257,8 @@ def print_report(connections: dict, complete_connections: list):
         print(f"Destination Port: {conn.packets[0].TCP_header.dst_port}")
         print(f"Status: {conn.state}")
         if conn in complete_connections:
-            print(conn.rtts)
-            print(f"Start Time: {conn.start_time}")
-            print(f"End Time: {conn.end_time}")
+            print(f"Start Time: {conn.start_time:.6f}")
+            print(f"End Time: {conn.end_time:.6f}")
             print(f"Duration: {round(conn.end_time - conn.start_time, 6)}")
             print(f"Number of packets sent from Source to Destination: {conn.src_to_dst_packets}")
             print(f"Number of packets sent from Destination to Source: {conn.dst_to_src_packets}")
@@ -269,14 +268,14 @@ def print_report(connections: dict, complete_connections: list):
             print(f"Total Number of Data Bytes: {conn.dst_to_src_bytes + conn.src_to_dst_bytes}B")
         print("END")
         print("+" * 40)
-        print("General")
-        print()
-        print(f"Total Number of Complete TCP Connections: {len(complete_connections)}")
-        print(f"Total Number of Reset TCP Connections: {reset_connections}")
-        print(f"Number of TCP Connections still open when the trace capture ended: {len(connections) - len(complete_connections)}")
-        print(f"Number of TCP Connections established before the capture started: {before_capture}")
-        print("-" * 0)
-        complete_connection_statistics(complete_connections)
+    print("-" * 40)
+    print("General")
+    print(f"Total Number of Complete TCP Connections: {len(complete_connections)}")
+    print(f"Total Number of Reset TCP Connections: {reset_connections}")
+    print(f"Number of TCP Connections still open when the trace capture ended: {len(connections) - len(complete_connections)}")
+    print(f"Number of TCP Connections established before the capture started: {before_capture}")
+    print("-" * 40)
+    complete_connection_statistics(complete_connections)
 
 def complete_connection_statistics(complete_connections: list):
     durations = [c.end_time - c.start_time for c in complete_connections]
@@ -298,12 +297,12 @@ def complete_connection_statistics(complete_connections: list):
     print(f"Mean Number of Packets including both send/received: {sum(packets) / len(packets):.6f}")
     print(f"Maximum Number of Packets including both send/received: {max(packets)}")
     print()
-    print(f"Minimum Receive Window Size including both send/received: {min(windows):.6f}")
+    print(f"Minimum Receive Window Size including both send/received: {min(windows)}")
     print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}")
-    print(f"Maximum Receive Window Size including both send/received: {max(windows):.6f}")
+    print(f"Maximum Receive Window Size including both send/received: {max(windows)}")
 
 if __name__ == "__main__":
-    
+
     if len(sys.argv) > 1:
         filename = sys.argv[1] # If file provided in command line, use this one
     else:
