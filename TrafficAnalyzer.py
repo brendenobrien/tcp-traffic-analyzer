@@ -55,7 +55,7 @@ class Connection:
 
         for p in self.packets:
             ip_total_len = p.IP_header.total_len
-            ip_header_len = p.IP_header.header_len
+            ip_header_len = p.IP_header.ip_header_len
             tcp_header_len = p.TCP_header.data_offset
 
             payload_size = ip_total_len - ip_header_len - tcp_header_len
@@ -69,7 +69,7 @@ class Connection:
 
             self.window_sizes.append(p.TCP_header.window_size)
             seq_num = p.TCP_header.seq_num
-            ack_num = p.TCP_hedaer.ack_num
+            ack_num = p.TCP_header.ack_num
             flags = p.TCP_header.flags
 
             if flags.get("ACK") == 1 and ack_num in pending_acks:
@@ -105,10 +105,10 @@ def parse_global_header(filename: str):
     # Grab magic number
     magic = struct.unpack("<I", global_header[:4])[0]
     if magic == 0xd4c3b2a1:
-        print("Swapped endian formatting")
+        #print("Swapped endian formatting")
         endian = ">"
     elif magic == 0xa1b2c3d4:
-        print("Native endian formatting")
+        #print("Native endian formatting")
         endian = "<"
     else:
         print(f"Unknown magic number {hex(magic)}")
@@ -220,15 +220,95 @@ def group_into_connections(packet_list: list) -> dict:
 
         if key not in connection_dict:
             connection_dict[key] = Connection(key)
-
+         #   print(key)
         connection_dict[key].add_packet(packet)
     return connection_dict
 
+def analyze_connections(connections: dict):
+    complete_connections = []
+
+    for key, conn in connections.items():
+        conn.analyze_state()
+
+        if conn.is_complete:
+            complete_connections.append(conn)
+
+    return complete_connections
+
+def print_report(connections: dict, complete_connections: list):
+    print(f"Total Number of Connections: {len(connections)}")
+    print()
+    reset_connections = 0
+    before_capture = 0
+    #print(connections)
+    count = 0
+    for conn in connections.values():
+        conn: Connection
+        if conn.rst_count >= 1:
+            reset_connections += 1
+        if conn.syn_count == 0:
+            before_capture += 1
+        count += 1
+        print(f"Connection {count}:")
+        print(f"Source Address: {conn.packets[0].IP_header.src_ip}")
+        print(f"Destination Address: {conn.packets[0].IP_header.dst_ip}")
+        print(f"Source Port: {conn.packets[0].TCP_header.src_port}")
+        print(f"Destination Port: {conn.packets[0].TCP_header.dst_port}")
+        print(f"Status: {conn.state}")
+        if conn in complete_connections:
+            print(conn.rtts)
+            print(f"Start Time: {conn.start_time}")
+            print(f"End Time: {conn.end_time}")
+            print(f"Duration: {round(conn.end_time - conn.start_time, 6)}")
+            print(f"Number of packets sent from Source to Destination: {conn.src_to_dst_packets}")
+            print(f"Number of packets sent from Destination to Source: {conn.dst_to_src_packets}")
+            print(f"Total Number of packets: {conn.src_to_dst_packets + conn.dst_to_src_packets}")
+            print(f"Number of data bytes sent from Source to Destination: {conn.src_to_dst_bytes}B")
+            print(f"Number of data bytes sent from Destination to Source: {conn.dst_to_src_bytes}B")
+            print(f"Total Number of Data Bytes: {conn.dst_to_src_bytes + conn.src_to_dst_bytes}B")
+        print("END")
+        print("+" * 40)
+        print("General")
+        print()
+        print(f"Total Number of Complete TCP Connections: {len(complete_connections)}")
+        print(f"Total Number of Reset TCP Connections: {reset_connections}")
+        print(f"Number of TCP Connections still open when the trace capture ended: {len(connections) - len(complete_connections)}")
+        print(f"Number of TCP Connections established before the capture started: {before_capture}")
+        print("-" * 0)
+        complete_connection_statistics(complete_connections)
+
+def complete_connection_statistics(complete_connections: list):
+    durations = [c.end_time - c.start_time for c in complete_connections]
+    rtts = [r for c in complete_connections for r in c.rtts]
+    packets = [len(c.packets) for c in complete_connections]
+    windows = [w for c in complete_connections for w in c.window_sizes]
+
+    print("Complete TCP Connections:")
+    print()
+    print(f"Minimum Time Duration: {min(durations):.6f}")
+    print(f"Mean Time Duration: {sum(durations) / len(durations):.6f}")
+    print(f"Maximum Time Duration: {max(durations):6f}")
+    print()
+    print(f"Minimum RTT Value: {min(rtts):.6f}")
+    print(f"Mean RTT Value: {sum(rtts) / len(rtts):.6f}")
+    print(f"Maximum RTT Value: {max(rtts):.6f}")
+    print()
+    print(f"Minimum Number of Packets including both send/received: {min(packets):.6f}")
+    print(f"Mean Number of Packets including both send/received: {sum(packets) / len(packets):.6f}")
+    print(f"Maximum Number of Packets including both send/received: {max(packets):.6f}")
+    print()
+    print(f"Minimum Receive Window Size including both send/received: {min(windows):.6f}")
+    print(f"Mean Receive Window Size including both send/received: {sum(windows) / len(windows):.6f}")
+    print(f"Maximum Receive Window Size including both send/received: {max(windows):.6f}")
 if __name__ == "__main__":
-    filename = "sample-capture-file.cap"
+    filename = "/home/brenden/coding/CSC361/A2/sample-capture-file.cap"
     endian, f = parse_global_header(filename)
     packets = parse_packets(endian, f)
     connections = group_into_connections(packets)
-
+    complete_connections = analyze_connections(connections)
+    for c in complete_connections:
+        c.calculate_metric()
+    
+    print_report(connections, complete_connections)
     
 
